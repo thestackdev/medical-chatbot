@@ -8,6 +8,8 @@ from langchain.chains import RetrievalQA
 from typing import Dict, Optional
 import chainlit as cl
 import re
+import requests
+import json
 
 GREETING_PATTERNS = [
     r"^hi$|^hello$|^hey$",
@@ -17,14 +19,18 @@ GREETING_PATTERNS = [
 
 DB_FAISS_PATH = "vectorstores/db_faiss"
 
-custom_prompt_template = """Use the following pieces of information to answer the user's question.
-If you don't know the answer, just say that you don't know, don't try to make up an answer.
+custom_prompt_template = """
+If it is not a medical related question, please respond with "I trained on medical data and can only answer medical questions. Please ask a medical related question."
+
+If it is a medical related question and you don't know the answer, please respond with "I don't know".
+
+Use the following pieces of information to answer the user's question.
 
 Context: {context}
 Question: {question}
 
 Only return the helpful answer below and nothing else.
-Helpful answer:
+Helpful Answer:
 """
 
 
@@ -62,13 +68,21 @@ def load_llm():
     return llm
 
 
+def google_serp_api(query):
+    api_key = "API_KEY"
+    url = f"https://api.scaleserp.com/search?api_key={api_key}&q={query}"
+    response = requests.get(url)
+    data = json.loads(response.text)
+    return data['organic_results'][0]['snippet'] if data['organic_results'] else "No results found"
+
+
 # QA Model Function
 async def qa_bot():
     embeddings = HuggingFaceEmbeddings(
         model_name="sentence-transformers/all-MiniLM-L6-v2",
         model_kwargs={"device": "cpu"},
     )
-    db = FAISS.load_local(DB_FAISS_PATH, embeddings)
+    db = FAISS.load_local(DB_FAISS_PATH, embeddings, allow_dangerous_deserialization=True)
     llm = load_llm()
     qa_prompt = set_custom_prompt()
     qa = retrieval_qa_chain(llm, qa_prompt, db)
@@ -125,15 +139,8 @@ async def main(message):
     res = await chain.acall(message.content, callbacks=[cb])
     answer = res["result"]
 
-    print(answer)
-    # sources = res["source_documents"]
-
-    # if sources:
-    #     answer += f"\nSources:" + str(sources)
-    # else:
-    #     answer += "\nNo sources found"
-
-    # await cl.Message(content=answer).send()
+    # if not answer or answer == "I don't know":
+    #     answer = google_serp_api(message.content)
 
 
 if __name__ == "__main__":
